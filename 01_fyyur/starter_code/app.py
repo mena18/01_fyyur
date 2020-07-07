@@ -12,6 +12,7 @@ import logging
 from logging import Formatter, FileHandler
 from flask_wtf import Form
 from forms import *
+from flask_migrate import Migrate
 #----------------------------------------------------------------------------#
 # App Config.
 #----------------------------------------------------------------------------#
@@ -21,14 +22,18 @@ moment = Moment(app)
 app.config.from_object('config')
 db = SQLAlchemy(app)
 
+migrate = Migrate(app,db)
+
 # TODO: connect to a local postgresql database
 
 #----------------------------------------------------------------------------#
 # Models.
 #----------------------------------------------------------------------------#
 
+# many to many relationship (Artist,Venue)
+
 class Venue(db.Model):
-    __tablename__ = 'Venue'
+    __tablename__ = 'venue'
 
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String)
@@ -39,10 +44,12 @@ class Venue(db.Model):
     image_link = db.Column(db.String(500))
     facebook_link = db.Column(db.String(120))
 
+    artists = db.relationship('Artist',secondary = "show")
+
     # TODO: implement any missing fields, as a database migration using Flask-Migrate
 
 class Artist(db.Model):
-    __tablename__ = 'Artist'
+    __tablename__ = 'artist'
 
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String)
@@ -53,9 +60,26 @@ class Artist(db.Model):
     image_link = db.Column(db.String(500))
     facebook_link = db.Column(db.String(120))
 
+    venues = db.relationship('Venue',secondary = "show")
+
     # TODO: implement any missing fields, as a database migration using Flask-Migrate
 
 # TODO Implement Show and Artist models, and complete all model relationships and properties, as a database migration.
+
+
+
+# i made the show as class extends db.model because i have extra field 'date' to add with the 2 foreignkeys'  
+class Show(db.Model):  # show represent the show (many to many relationship between venus and artists)
+    __tablename__ = "show"
+
+    id = db.Column(db.Integer,primary_key=True)
+    artist_id = db.Column(db.Integer, db.ForeignKey('artist.id') )
+    venue_id = db.Column(db.Integer, db.ForeignKey('venue.id'))
+    
+    date = db.Column(db.DateTime)
+
+    artist = db.relationship(Artist, backref=db.backref("shows", cascade="all, delete-orphan"))
+    venue = db.relationship(Venue, backref=db.backref("shows", cascade="all, delete-orphan"))
 
 #----------------------------------------------------------------------------#
 # Filters.
@@ -74,6 +98,12 @@ app.jinja_env.filters['datetime'] = format_datetime
 #----------------------------------------------------------------------------#
 # Controllers.
 #----------------------------------------------------------------------------#
+
+
+@app.route('/testing')
+def testing():
+  artists = Artist.query.first();
+  return artists.name;
 
 @app.route('/')
 def index():
