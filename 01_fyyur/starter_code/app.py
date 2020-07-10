@@ -240,6 +240,8 @@ def show_venue(venue_id):
     label("venue_id",Show.venue_id),
     ).select_from(Show).filter_by(venue_id=venue_id).join(Artist).all()
 
+  # i get  all the shows and seperate them in python instead of making 2 quiries one to get the previous shows and one
+  # to get the upcoming 
   for show in shows:
     if(show.start_time > datetime.now()):
       data.upcoming_shows.append(show)
