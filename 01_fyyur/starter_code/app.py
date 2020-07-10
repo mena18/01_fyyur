@@ -38,7 +38,7 @@ migrate = Migrate(app,db)
 
 
 class Venue(db.Model):
-    __tablename__ = 'venue'
+    __tablename__ = 'venues'
 
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String,nullable=False)
@@ -51,17 +51,17 @@ class Venue(db.Model):
     
 
     # TODO: implement any missing fields, as a database migration using Flask-Migrate
-    artists = db.relationship('Artist',secondary = "show",backref="venues")
+    # artists = db.relationship('Artist',secondary = "shows",backref="venues")
     genres = db.Column(db.String(120),nullable=False)
     seeking_talent = db.Column(db.Boolean,default=False)
     seeking_description =  db.Column(db.String(500),default="")
-
+    show = db.relationship("Show",cascade="all, delete-orphan")
 
     
 
 
 class Artist(db.Model):
-    __tablename__ = 'artist'
+    __tablename__ = 'artists'
 
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String)
@@ -77,23 +77,42 @@ class Artist(db.Model):
     # venues = db.relationship('Venue',secondary = "show")
     seeking_venue = db.Column(db.Boolean,default=False)
     seeking_description =  db.Column(db.String(500),default="")
-
+    show = db.relationship("Show",cascade="all, delete-orphan")
 
 # TODO Implement Show and Artist models, and complete all model relationships and properties, as a database migration.
 
 
 # i made the show as class extends db.model because i have extra field 'date' to add with the 2 foreignkeys'  
+
+#-------------
+# Update (Review-1)
+#--------------
+# - change table names to be plural 
+# - change the cascade="all, delete-orphan" to be in the main class (Artist,venue) not the intermediate (Show) which fix 
+#   the problem of deletion 
+# - remove the relationship from venue to artist and this make me now unable to write artist.venues.append(venue) but i wouldn't write 
+#   this any way because every relationship between venue and artist need 'date' field so it's easier to add them by creaing
+#   show instance  (i know removing this relationship  seems as if i am just not using many to many relationship at all)
+#   but i am using it i just made the refrence from the show to (Artist,venue) and from (Artist,venue) to the show so know i have 2 tables and a third one
+#   that have 2 foreign keys pointing to them (which is exactly the many to many relationship ) just with custom implementation
+#   to allow me to add 'date' field , and allow relationship between the same artist and venue with different dates with no      
+#   error on deletion .
+#   i get the idea from https://stackoverflow.com/questions/7417906/sqlalchemy-manytomany-secondary-table-with-additional-fields
+#----------------
+
+
 class Show(db.Model):  # show represent the show (many to many relationship between venus and artists)
-    __tablename__ = "show"
+    __tablename__ = "shows"
 
     id = db.Column(db.Integer,primary_key=True)
-    artist_id = db.Column(db.Integer, db.ForeignKey('artist.id') )
-    venue_id = db.Column(db.Integer, db.ForeignKey('venue.id'))
-    
+    artist_id = db.Column(db.Integer, db.ForeignKey('artists.id') )
+    venue_id = db.Column(db.Integer, db.ForeignKey('venues.id'))
     date = db.Column(db.DateTime,default=datetime.utcnow())
 
-    artist = db.relationship(Artist, backref=db.backref("shows", cascade="all,delete"))
-    venue = db.relationship(Venue, backref=db.backref("shows", cascade="all,delete"))
+    venue = db.relationship(Venue)
+    artist = db.relationship(Artist)
+
+
 
 #----------------------------------------------------------------------------#
 # Filters.
@@ -172,15 +191,24 @@ def search_venues():
   # seach for Hop should return "The Musical Hop".
   # search for "Music" should return "The Musical Hop" and "Park Square Live Music & Coffee"
   
-  search_for = request.form.get('search_term', '').lower()
+  #-------------
+  # Update (Review-1)
+  #--------------
+  # using ilike in the search instead of converting  them to lower
+  #----------------
+
+
+  search_for = request.form.get('search_term', '')
+
+
 
   # matching with names,city,
   match_all = Venue.query.filter( 
     or_(
-      func.lower(Venue.name).like(f'%{search_for}%'), # f'{val}' == '{}'.format(val)
+      Venue.name.ilike(f'%{search_for}%'), # f'{val}' == '{}'.format(val)
       or_(
-        func.lower(Venue.city).like(f'%{search_for}%'),
-        func.lower(Venue.state).like(f'%{search_for}%'))
+        Venue.city.ilike(f'%{search_for}%'),
+        Venue.state.ilike(f'%{search_for}%'))
        ) ).all()
     
   count = len(match_all)
@@ -193,25 +221,30 @@ def search_venues():
 def show_venue(venue_id):
   # shows the venue page with the given venue_id
   # TODO: replace with real venue data from the venues table, using venue_id
-  
+
+  #-------------
+  # Update (Review-1)
+  #--------------
+  # using join between shows and Artist insted of artist.shows
+  #----------------
+
   data = Venue.query.get_or_404(venue_id);
   data.upcoming_shows = [];
   data.past_shows = [];
-  for show in data.shows:
-    if(show.date > datetime.now()):
-      data.upcoming_shows.append({
-        "artist_id":show.artist.id,
-        "artist_name":show.artist.name,
-        "artist_image_link":show.artist.image_link,
-        "start_time":show.date,
-      })
+
+  shows = db.session.query(
+    label("artist_id",Artist.id),
+    label("artist_name",Artist.name),
+    label("artist_image_link",Artist.image_link),
+    label("start_time",Show.date),
+    label("venue_id",Show.venue_id),
+    ).select_from(Show).filter_by(venue_id=venue_id).join(Artist).all()
+
+  for show in shows:
+    if(show.start_time > datetime.now()):
+      data.upcoming_shows.append(show)
     else:
-      data.past_shows.append({
-        "artist_id":show.artist.id,
-        "artist_name":show.artist.name,
-        "artist_image_link":show.artist.image_link,
-        "start_time":show.date,
-      })
+      data.past_shows.append(show)
   data.upcoming_shows_count = len(data.upcoming_shows);
   data.past_shows_count = len(data.past_shows);
 
@@ -260,11 +293,11 @@ def create_venue_submission():
 
     flash('Venue ' + form.name.data + ' was successfully listed!')
     
-    return render_template('pages/home.html')
+    return redirect(url_for('show_venue', venue_id=venue.id))
   else:
     return render_template('forms/new_venue.html', form=form,status="create")
 
-  return render_template('pages/home.html')
+  return redirect(url_for('index'))
 
 
 
@@ -327,32 +360,23 @@ def edit_venue_submission(venue_id):
 def delete_venue(venue_id):
   # TODO: Complete this endpoint for taking a venue_id, and using
   # SQLAlchemy ORM to delete a record. Handle cases where the session commit could fail.
+  
+  
+  #-------------
+  # Update (Review-1)
+  #--------------
+  # change delete function
+  #----------------
+  
   try:
 
-    venue = Vrtist.query.get_or_404(venue_id)
-
+    venue = Venue.query.get_or_404(venue_id)
     db.session.delete(venue)
     db.session.commit()
     flash("deleted successfully");
 
   except :
-    """
-    i was getting this error :
-    "sqlalchemy.orm.exc.StaleDataError: expected to delete 1 row(s); Only 2 were matched"
-    and i understand that it means i am calling delete 2 times but i didn't understand how this is happening
-    but i noticed that i happen i delete venue that has 2 shows connected to the same artist and the same happen with artist
-    so i didn't really realizaed yet why this make and error but i fixed the deletion of the shows manually then delete the 
-    venue after having zero shows;
-    
-    """
-    db.session.rollback()
-    try:
-      Show.query.filter(Show.venue_id==venue_id).delete()
-      db.session.delete(venue)
-      db.session.commit()
-      flash("deleted successfully");
-    except :
-      flash("Error happen")
+    flash("Error happen")
 
   return redirect(url_for('index'))
 
@@ -373,15 +397,21 @@ def search_artists():
   # seach for "A" should return "Guns N Petals", "Matt Quevado", and "The Wild Sax Band".
   # search for "band" should return "The Wild Sax Band".
   
-  search_for = request.form.get('search_term', '').lower()
+  #-------------
+  # Update (Review-1)
+  #--------------
+  # using ilike in the search instead of converting  them to lower
+  #----------------
+
+  search_for = request.form.get('search_term', '')
 
   # matching with names,city,
   match_all = Artist.query.filter( 
     or_(
-      func.lower(Artist.name).like(f'%{search_for}%'),
+      Artist.name.ilike(f'%{search_for}%'),
       or_(
-        func.lower(Artist.city).like(f'%{search_for}%'),
-        func.lower(Artist.state).like(f'%{search_for}%'))
+        Artist.city.ilike(f'%{search_for}%'),
+        Artist.state.ilike(f'%{search_for}%'))
        ) ).all()
     
   count = len(match_all)
@@ -396,24 +426,29 @@ def show_artist(artist_id):
   # shows the venue page with the given venue_id
   # TODO: replace with real venue data from the venues table, using venue_id
   
+
+  #-------------
+  # Update (Review-1)
+  #--------------
+  # using join between shows and Venues insted of venue.shows
+  #----------------
+
   data = Artist.query.get_or_404(artist_id);
   data.upcoming_shows = [];
   data.past_shows = [];
-  for show in data.shows:
-    if(show.date > datetime.now()):
-      data.upcoming_shows.append({
-        "venue_id":show.venue.id,
-        "venue_name":show.venue.name,
-        "venue_image_link":show.venue.image_link,
-        "start_time":show.date,
-      })
+  shows =   db.session.query(
+    label("venue_id",Venue.id),
+    label("venue_name",Venue.name),
+    label("venue_image_link",Venue.image_link),
+    label("start_time",Show.date),
+    label("artist_id",Show.artist_id),
+    ).select_from(Show).filter_by(artist_id=artist_id).join(Venue).all()
+
+  for show in shows:
+    if(show.start_time > datetime.now()):
+      data.upcoming_shows.append(show)
     else:
-      data.past_shows.append({
-        "venue_id":show.venue.id,
-        "venue_name":show.venue.name,
-        "venue_image_link":show.venue.image_link,
-        "start_time":show.date,
-      })
+      data.past_shows.append(show)
   data.upcoming_shows_count = len(data.upcoming_shows);
   data.past_shows_count = len(data.past_shows);
   
@@ -515,27 +550,23 @@ def edit_artist_submission(artist_id):
 
 @app.route('/artists/<artist_id>/delete', methods=['GET'])
 def delete_artist(artist_id):
+  
+  #-------------
+  # Update (Review-1)
+  #--------------
+  # change delete function
+  #----------------
+
   try:
-
     artist = Artist.query.get_or_404(artist_id)
-
     db.session.delete(artist)
     db.session.commit()
     flash("deleted successfully");
-
   except :
-
-    db.session.rollback()
-    try:
-      print("inside")
-      Show.query.filter(Show.artist_id==artist_id).delete()
-      db.session.delete(artist)
-      db.session.commit()
-      flash("deleted successfully");
-    except :
-      flash("Error happen")
+    flash("Error happen")
 
   return redirect(url_for('index'))
+
 
 
 
@@ -586,7 +617,7 @@ def create_show_submission():
       db.session.commit()
 
       flash("created successfully")
-      return render_template('pages/home.html')
+      return redirect(url_for('index'))
     except :
       flash("The id of artist or venue is wrong ");
       return render_template('forms/new_show.html', form=form)
